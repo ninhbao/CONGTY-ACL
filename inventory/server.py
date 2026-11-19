@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from importer import parse_excel, clean
-from ledger import migrate, fifo, change
+from ledger import migrate, fifo, change, rename_base_unit
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('ACL_DB', ROOT / 'data' / 'inventory.sqlite3'))
@@ -77,12 +77,18 @@ def mutate(c,path,d):
         name=clean(d.get('name'))
         if not name: raise ValueError('Nhập tên sản phẩm.')
         values=(name,clean(d.get('category')),clean(d.get('brand')),numeric(d.get('pack'),'Quy cách',0.000001,True),numeric(d.get('price'),'Giá nhập',0,True),clean(d.get('package')),clean(d.get('unit')),numeric(d.get('minimum',0),'Tồn tối thiểu'))
+        c.execute('BEGIN IMMEDIATE')
         with c:
             if d.get('id'):
                 old=c.execute('SELECT * FROM products WHERE id=?',(d['id'],)).fetchone()
                 if not old: raise ValueError('Không tìm thấy sản phẩm.')
-                if old['unit'] and clean(d.get('unit')).casefold()!=old['unit'].casefold() and c.execute('SELECT 1 FROM movements WHERE product_id=?',(d['id'],)).fetchone():
-                    raise ValueError('Không đổi đơn vị gốc khi đã có lịch sử. Dùng quy đổi đơn vị trong phiếu.')
+                if 'expected_unit' in d and clean(d['expected_unit'])!=clean(old['unit']):
+                    raise ValueError('Đơn vị sản phẩm đã thay đổi ở cửa sổ khác. Tải lại danh mục trước khi sửa.')
+                if values[6]!=clean(old['unit']):
+                    if not values[6]: raise ValueError('Đơn vị lẻ không được để trống.')
+                    if values[5].casefold()==values[6].casefold() and values[3] not in (None,1):
+                        raise ValueError('Đơn vị kiện trùng đơn vị lẻ mới. Hãy sửa tên kiện hoặc đặt quy cách bằng 1.')
+                    rename_base_unit(c,old,values[6])
                 c.execute('UPDATE products SET name=?,category=?,brand=?,pack=?,price=?,package=?,unit=?,minimum=? WHERE id=?',values+(d['id'],))
             else: c.execute('INSERT INTO products(name,category,brand,pack,price,package,unit,minimum) VALUES(?,?,?,?,?,?,?,?)',values)
     else: raise ValueError('Chức năng không tồn tại.')

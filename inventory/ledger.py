@@ -80,6 +80,26 @@ def positive(value, label):
     if not math.isfinite(n) or n <= 0: raise ValueError(label + ' phải lớn hơn 0.')
     return n
 
+def rename_base_unit(c, product, new_unit):
+    """Correct the base-unit label, preserving canonical quantities and lot history."""
+    before = rows(c, product['id'])
+    old_unit = clean(product['unit']).casefold()
+    for m in before:
+        entered_unit = clean(m['entered_unit'] or m['unit'])
+        factor = m['factor'] or 1
+        # Keep genuine package conversions; normalize conflicting/legacy labels.
+        normalize = abs(factor-1) < EPS or entered_unit.casefold() in (old_unit, new_unit.casefold())
+        c.execute('UPDATE movements SET unit=?,entered_unit=?,entered_qty=?,factor=?,revision=revision+1 WHERE id=?',
+                  (new_unit, new_unit if normalize else entered_unit,
+                   m['qty'] if normalize else m['entered_qty'], 1 if normalize else factor, m['id']))
+    for mapping in c.execute('SELECT name FROM product_units WHERE product_id=?', (product['id'],)).fetchall():
+        if clean(mapping['name']).casefold() in (old_unit, new_unit.casefold()):
+            c.execute('DELETE FROM product_units WHERE product_id=? AND name=?', (product['id'], mapping['name']))
+    c.execute('INSERT OR IGNORE INTO units(name) VALUES(?)', (new_unit,))
+    c.execute('INSERT INTO audit(action,before_json,after_json) VALUES(?,?,?)',
+              ('/api/product/unit', json.dumps({'product':dict(product),'movements':before},ensure_ascii=False),
+               json.dumps({'product_id':product['id'],'unit':new_unit,'movements':rows(c,product['id'])},ensure_ascii=False)))
+
 def conversion(c, p, d, existing=None):
     quantity = positive(d.get('qty'), 'Số lượng')
     # Legacy clients may still submit mode=pack; new clients always specify a unit.

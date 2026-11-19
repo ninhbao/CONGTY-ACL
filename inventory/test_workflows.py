@@ -102,9 +102,40 @@ class WorkflowTests(unittest.TestCase):
         m=next(r for r in rows(self.c) if r['kind']=='order' and r['product_id']==1)
         self.order([dict(id=m['id'],product_id=1,qty=2)],**self.document())
         self.assertEqual((self.stock(),self.stock(2)),(8,10))
-    def test_base_unit_locked_with_history(self):
+    def test_base_unit_rename_updates_all_history(self):
+        self.move('in',30,manufactured='2026-10-01');self.move('out',3)
+        self.order([dict(product_id=1,qty=2)])
+        before=rows(self.c)
+        server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Gói',expected_unit='Chai'))
+        after=rows(self.c)
+        self.assertEqual(self.stock(),25)
+        for old,new in zip(before,after):
+            self.assertEqual(new['unit'],'Gói');self.assertEqual(new['entered_unit'],'Gói')
+            self.assertEqual(new['qty'],old['qty']);self.assertEqual(new['manufactured'],old['manufactured'])
+            self.assertEqual(new['revision'],old['revision']+1)
+        self.assertEqual(fifo(after)[after[-1]['id']]['lots'][0]['unit'],'Gói')
+        with self.assertRaises(ValueError):server.mutate(self.c,'/api/movement/delete',before[1])
+    def test_rename_preserves_pack_conversion_and_other_products(self):
+        self.move('in',2,input_unit='Thùng');self.move('in',5,pid=2)
+        server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Kg',package='Thùng',pack=12))
+        ms=rows(self.c);self.assertEqual((ms[0]['qty'],ms[0]['entered_qty'],ms[0]['entered_unit'],ms[0]['factor']),(24,2,'Thùng',12))
+        self.assertEqual(ms[1]['unit'],'Gói')
+    def test_rename_normalizes_mixed_legacy_units(self):
         self.move('in',10)
-        with self.assertRaises(ValueError):server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Kg'))
+        self.c.execute("INSERT INTO movements(product_id,kind,date,qty,unit) VALUES(1,'out','2026-11-19',2,'Kg')");self.c.commit()
+        server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Gói'))
+        self.assertTrue(all(m['unit']=='Gói' and m['entered_unit']=='Gói' for m in rows(self.c)))
+        self.assertEqual(self.stock(),8)
+    def test_rename_collision_and_stale_product_are_rejected(self):
+        self.move('in',2,input_unit='Thùng')
+        with self.assertRaises(ValueError):server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Thùng',package='Thùng',pack=12))
+        self.assertEqual(rows(self.c)[0]['unit'],'Chai')
+        with self.assertRaises(ValueError):server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Kg',expected_unit='Gói'))
+    def test_rename_to_former_conversion_unit_keeps_quantity(self):
+        self.move('in',2,input_unit='Hộp',factor=6)
+        server.mutate(self.c,'/api/product',dict(id=1,name='Hàng A',unit='Hộp'))
+        m=rows(self.c)[0];self.assertEqual((m['qty'],m['entered_qty'],m['factor']),(12,12,1))
+        self.assertEqual(self.c.execute('SELECT COUNT(*) FROM product_units WHERE product_id=1 AND name=?',('Hộp',)).fetchone()[0],0)
     def test_audit_records_changes(self):
         r=self.move('in',10);server.mutate(self.c,'/api/movement/delete',r)
         self.assertEqual(self.c.execute('SELECT COUNT(*) FROM audit').fetchone()[0],2)

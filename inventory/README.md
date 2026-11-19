@@ -24,6 +24,7 @@ Chọn **Nhập Excel** và chọn file kho ACL. File cần bốn sheet Hàng ho
 - Tìm sản phẩm ngay trong từng dòng phiếu theo tên, thương hiệu hoặc phân loại, hỗ trợ gõ không dấu. Nút Tạo sản phẩm mới mở khung tạo nhanh, tự chọn sản phẩm vừa lưu và giữ các dòng hàng, số lượng, đối tác, ghi chú đang nhập.
 
 - Tồn đến ngày chọn, tìm kiếm theo hàng/nhãn/loại, lọc tồn âm và cần bổ sung.
+- Trong Danh mục hàng hóa → Chỉnh sửa, đổi đơn vị lẻ sẽ sửa đơn vị tồn trên toàn bộ phiếu nhập, xuất và đơn hàng của sản phẩm. Đây là sửa nhãn: giữ nguyên số lượng tồn và ngày sản xuất, không tự chuyển đổi Chai sang Kg theo tỷ lệ. Phiếu ghi theo kiện vẫn giữ số kiện/hệ số; nếu đơn vị ghi trùng đơn vị lẻ mới, phiếu được biểu diễn bằng số lượng tồn với hệ số 1. Thay đổi được ghi nhật ký và tăng phiên bản phiếu để chặn sửa từ cửa sổ cũ.
 - Danh mục hàng hóa, giá nhập, quy cách, ngưỡng tồn tối thiểu.
 - Phiếu nhập/xuất theo đơn vị lẻ hoặc số kiện, ngày sản xuất, đối tác và ghi chú.
 - Lên đơn nhiều sản phẩm: lưu đơn trừ tồn ngay tại ngày ghi đơn; không tạo thêm phiếu xuất cho cùng đơn để tránh trừ hai lần.
