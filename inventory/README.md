@@ -15,9 +15,13 @@ python server.py
 
 Trên Windows, kích hoạt bằng `.venv\Scripts\activate`. Sau đó mở http://127.0.0.1:8765.
 
-Chọn **Nhập Excel** và chọn file kho ACL. File cần bốn sheet Hàng hoá, Khách Hàng, Nhập Kho, Xuất Kho theo cấu trúc nguồn. Chỉ nhập lịch sử một lần khi kho chưa có giao dịch; ứng dụng chặn nhập trùng. Xem **Đối chiếu dữ liệu** ngay sau khi nhập.
+Chọn **Nhập Excel** và chọn file kho ACL. File cần bốn sheet Hàng hoá, Khách Hàng, Nhập Kho, Xuất Kho theo cấu trúc nguồn. Chỉ nhập lịch sử một lần khi kho chưa có giao dịch; ứng dụng chặn nhập trùng. Kiểm tra các trạng thái **Cần đối chiếu** ở Tổng quan sau khi nhập.
 
 ## Chức năng
+
+- Menu gọn gồm Tổng quan tồn kho, Nhập / Xuất kho, Lên đơn và Danh mục hàng hóa. Khách hàng và nhà cung cấp vẫn được chọn/thêm trong phiếu, không hiện menu riêng.
+- Nhập / Xuất kho có bộ lọc tất cả, phiếu nhập, phiếu xuất. Đơn hàng nằm riêng trong mục Lên đơn.
+- Tìm sản phẩm ngay trong từng dòng phiếu theo tên, thương hiệu hoặc phân loại, hỗ trợ gõ không dấu. Nút Tạo sản phẩm mới mở khung tạo nhanh, tự chọn sản phẩm vừa lưu và giữ các dòng hàng, số lượng, đối tác, ghi chú đang nhập.
 
 - Tồn đến ngày chọn, tìm kiếm theo hàng/nhãn/loại, lọc tồn âm và cần bổ sung.
 - Danh mục hàng hóa, giá nhập, quy cách, ngưỡng tồn tối thiểu.
