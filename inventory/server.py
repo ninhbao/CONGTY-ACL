@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from importer import parse_excel, clean
+from ledger import migrate, fifo, change
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('ACL_DB', ROOT / 'data' / 'inventory.sqlite3'))
@@ -18,18 +19,25 @@ def connect():
     CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY,product_id INTEGER,kind TEXT,date TEXT,party TEXT,qty REAL,unit TEXT,manufactured TEXT,note TEXT,source TEXT);
     CREATE TABLE IF NOT EXISTS imports(hash TEXT PRIMARY KEY,summary TEXT,warnings TEXT);
     ''')
+    migrate(c)
     return c
 
 def snapshot(c, cutoff='9999-12-31'):
     products=[dict(r) for r in c.execute('SELECT * FROM products ORDER BY name')]
     movements=[dict(r) for r in c.execute('SELECT m.*,p.name FROM movements m JOIN products p ON p.id=m.product_id ORDER BY date DESC,m.id DESC')]
+    allocations=fifo(movements)
+    for m in movements:
+        m['fifo']=allocations.get(m['id'])
+        if m['kind']!='in':
+            m['source_manufactured']=m['manufactured']
+            m['manufactured']=', '.join(dict.fromkeys(lot['manufactured'] for lot in (m['fifo'] or {}).get('lots',[]) if lot['manufactured']))
     for p in products:
         ms=[m for m in movements if m['product_id']==p['id'] and m['date']<=cutoff]
         p['stock']=round(sum(m['qty']*(1 if m['kind']=='in' else -1) for m in ms),6)
         p['review']=len({m['unit'].casefold() for m in ms if m['unit']})>1
         p['value']=None if p['price'] is None or p['review'] else round(p['stock']*p['price'])
     reports=[dict(r) for r in c.execute('SELECT summary,warnings FROM imports')]
-    return dict(products=products,movements=movements,customers=[dict(r) for r in c.execute('SELECT * FROM customers ORDER BY name')],reports=[dict(summary=json.loads(r['summary']),warnings=json.loads(r['warnings'])) for r in reports])
+    return dict(products=products,movements=movements,customers=[dict(r) for r in c.execute('SELECT * FROM customers ORDER BY name')],suppliers=[dict(r) for r in c.execute('SELECT * FROM suppliers ORDER BY name')],units=[r['name'] for r in c.execute('SELECT name FROM units ORDER BY name')],conversions=[dict(r) for r in c.execute('SELECT * FROM product_units')],reports=[dict(summary=json.loads(r['summary']),warnings=json.loads(r['warnings'])) for r in reports])
 
 def import_data(c, raw):
     digest=hashlib.sha256(raw).hexdigest()
@@ -56,42 +64,29 @@ def numeric(v, label, minimum=0, nullable=False):
     return n
 
 def mutate(c,path,d):
+    if path in ('/api/movement','/api/movement/delete','/api/order','/api/order/delete'):
+        return change(c,path,d)
+    if path=='/api/preview':
+        return change(c,'/api/order' if d.get('lines') is not None else '/api/movement',d,preview=True)
+    if path=='/api/supplier':
+        name=clean(d.get('name'))
+        if not name: raise ValueError('Nhập tên nhà cung cấp.')
+        with c: c.execute('INSERT OR IGNORE INTO suppliers(name) VALUES(?)',(name,))
+        return {'ok':True}
     if path=='/api/product':
         name=clean(d.get('name'))
         if not name: raise ValueError('Nhập tên sản phẩm.')
         values=(name,clean(d.get('category')),clean(d.get('brand')),numeric(d.get('pack'),'Quy cách',0.000001,True),numeric(d.get('price'),'Giá nhập',0,True),clean(d.get('package')),clean(d.get('unit')),numeric(d.get('minimum',0),'Tồn tối thiểu'))
         with c:
             if d.get('id'):
-                if not c.execute('SELECT 1 FROM products WHERE id=?',(d['id'],)).fetchone(): raise ValueError('Không tìm thấy sản phẩm.')
+                old=c.execute('SELECT * FROM products WHERE id=?',(d['id'],)).fetchone()
+                if not old: raise ValueError('Không tìm thấy sản phẩm.')
+                if old['unit'] and clean(d.get('unit')).casefold()!=old['unit'].casefold() and c.execute('SELECT 1 FROM movements WHERE product_id=?',(d['id'],)).fetchone():
+                    raise ValueError('Không đổi đơn vị gốc khi đã có lịch sử. Dùng quy đổi đơn vị trong phiếu.')
                 c.execute('UPDATE products SET name=?,category=?,brand=?,pack=?,price=?,package=?,unit=?,minimum=? WHERE id=?',values+(d['id'],))
             else: c.execute('INSERT INTO products(name,category,brand,pack,price,package,unit,minimum) VALUES(?,?,?,?,?,?,?,?)',values)
-    elif path=='/api/movement':
-        kind=d.get('kind'); dt=d.get('date',''); date.fromisoformat(dt)
-        if kind not in ('in','out'): raise ValueError('Loại giao dịch không hợp lệ.')
-        qty=numeric(d.get('qty'),'Số lượng',0.000001)
-        c.execute('BEGIN IMMEDIATE')
-        try:
-            p=c.execute('SELECT * FROM products WHERE id=?',(d.get('product_id'),)).fetchone()
-            if not p: raise ValueError('Không tìm thấy sản phẩm.')
-            if d.get('mode')=='pack':
-                if not p['pack']: raise ValueError('Chưa khai báo quy cách.')
-                qty*=p['pack']
-            if kind=='out':
-                stock=next(p2 for p2 in snapshot(c,dt)['products'] if p2['id']==p['id'])
-                if stock['review']: raise ValueError('Sản phẩm có đơn vị không nhất quán trong Excel. Cần đối chiếu trước khi xuất thêm.')
-                future=c.execute('SELECT date,SUM(CASE kind WHEN \'in\' THEN qty ELSE -qty END) change FROM movements WHERE product_id=? AND date>? GROUP BY date ORDER BY date',(p['id'],dt)).fetchall()
-                balance=stock['stock']-qty
-                if balance < -0.000001: raise ValueError('Không đủ tồn tại ngày xuất.')
-                for row in future:
-                    balance+=row['change']
-                    if balance < -0.000001: raise ValueError('Phiếu này làm âm tồn ở giao dịch sau ngày xuất.')
-            manufactured=d.get('manufactured','')
-            if manufactured: date.fromisoformat(manufactured)
-            c.execute('INSERT INTO movements(product_id,kind,date,party,qty,unit,manufactured,note,source) VALUES(?,?,?,?,?,?,?,?,?)',(p['id'],kind,dt,clean(d.get('party')),qty,p['unit'],manufactured,clean(d.get('note')),'manual'))
-            c.commit()
-        except Exception:
-            c.rollback(); raise
     else: raise ValueError('Chức năng không tồn tại.')
+    return {'ok':True}
 
 class Handler(BaseHTTPRequestHandler):
     def send(self,data,status=200,ctype='application/json; charset=utf-8'):
@@ -109,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as c:
                 data=snapshot(c)
             return self.send(data)
-        files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
+        files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/workflows.js':('workflows.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
         if path not in files: return self.send({'error':'Không tìm thấy'},404)
         name,mime=files[path]; self.send((ROOT/'static'/name).read_bytes(),ctype=mime)
     def do_POST(self):
@@ -120,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
             raw=self.rfile.read(size)
             with connect() as c:
                 if self.path=='/api/import': result=import_data(c,raw)
-                else: mutate(c,self.path,json.loads(raw)); result={'ok':True}
+                else: result=mutate(c,self.path,json.loads(raw))
             self.send(result)
         except (ValueError,KeyError,sqlite3.IntegrityError,zipfile.BadZipFile) as e: self.send({'error':str(e)},400)
         except Exception: self.send({'error':'Không thể xử lý dữ liệu. Kiểm tra định dạng file và thử lại.'},400)
