@@ -73,12 +73,15 @@ render=function(){
  }else if(view==='orders'){
   heads=['Mã đơn','Ngày','Khách hàng','Sản phẩm / Số lượng','Ngày SX theo FIFO','Tình trạng'];
   const items=groups().filter(ms=>ms[0].date<=$('cutoff').value&&match(ms[0].document_id,ms[0].party,...ms.map(m=>m.name)));
-  exportRows=items.map(ms=>[ms[0].document_id,ms[0].date,ms[0].party,ms.map(m=>`${m.name}: ${fmt(m.entered_qty??m.qty)} ${m.entered_unit||m.unit}`).join('\n'),ms.map(m=>m.name+'\n'+fifoText(m.fifo)).join('\n'),'Đã trừ tồn']);
-  rows=exportRows.map((r,i)=>[...r.map(v=>`<span class="lot-text">${esc(v)}</span>`),rowActions('order',items[i][0].document_id)]);
+  exportRows=items.map(ms=>[ms[0].document_id,ms[0].date,ms[0].party,ms.map(m=>`${m.name}: ${fmt(m.entered_qty??m.qty)} ${m.entered_unit||m.unit}`).join('\n'),ms.map(m=>m.name+'\n'+fifoText(m.fifo)).join('\n'),ms[0].shipment?`Đã lập phiếu xuất ${ms[0].shipment.number}\nNgày xuất: ${dateText(ms[0].shipment.date)}`:'Chờ xuất · Đã trừ tồn']);
+  rows=exportRows.map((r,i)=>[...r.map(v=>`<span class="lot-text">${esc(v)}</span>`),(items[i][0].shipment?'':`<button class="primary" data-dispatch="order" data-id="${esc(items[i][0].document_id)}">Xuất kho</button>`)+rowActions('order',items[i][0].document_id)]);
  }else{
   heads=['Ngày','Loại phiếu','Sản phẩm','Số lượng ghi','Quy đổi tồn','Đối tác','Ngày SX / FIFO','Nguồn / Ghi chú'];
-  const items=state.movements.filter(m=>m.date<=$('cutoff').value&&(view==='movements'?m.kind!=='order'&&($('movement-kind').value==='all'||m.kind===$('movement-kind').value):m.kind===view)&&match(m.name,m.party,m.note,m.document_id));
-  exportRows=items.map(m=>[m.date,labels[m.kind],m.name,`${fmt(m.entered_qty??m.qty)} ${m.entered_unit||m.unit}`,`${fmt(m.qty)} ${m.unit}`,m.party,m.kind==='in'?dateText(m.manufactured):fifoText(m.fifo),m.note]);
+  const items=state.movements.filter(m=>{
+   const kind=m.shipment?'out':m.kind,dt=m.shipment?.date||m.date;
+   return dt<=$('cutoff').value&&(view==='movements'?kind!=='order'&&($('movement-kind').value==='all'||kind===$('movement-kind').value):kind===view)&&match(m.name,m.party,m.note,m.document_id,m.shipment?.number||'');
+  }).sort((a,b)=>(b.shipment?.date||b.date).localeCompare(a.shipment?.date||a.date)||b.id-a.id);
+  exportRows=items.map(m=>[m.shipment?.date||m.date,m.shipment?'Xuất từ đơn':labels[m.kind],m.name,`${fmt(m.entered_qty??m.qty)} ${m.entered_unit||m.unit}`,`${fmt(m.qty)} ${m.unit}`,m.party,m.kind==='in'?dateText(m.manufactured):fifoText(m.fifo),m.shipment?`${m.shipment.number} · ${m.document_id}\n${m.shipment.note||''}`:m.note]);
   rows=exportRows.map((r,i)=>[...r.map((v,j)=>j===6?`<span class="lot-text">${esc(v)}</span>`:esc(v)),rowActions(items[i].kind==='order'?'order':'movement',items[i].kind==='order'?items[i].document_id:items[i].id)]);
  }
  $('content').innerHTML=table(view==='suppliers'?heads:[...heads,'Thao tác'],rows);$('count').textContent=rows.length+' dòng • đến '+dateText($('cutoff').value);exportRows=[heads,...exportRows];
@@ -141,24 +144,31 @@ function openDocument(kind='in',existing=null){
  if(order)$('add-line').onclick=()=>{$('lines').append(lineElement());refreshKindVisibility();};
  refreshKindVisibility();$('dialog').showModal();schedulePreview();
 }
+function openDispatch(ms){
+ editingDocument=ms;previewVersion++;$('form').dataset.mode='dispatch';$('formerror').textContent='';$('dialogtitle').textContent='Xuất kho đơn '+ms[0].document_id;$('fields').classList.add('document-fields');
+ const dt=localToday<ms[0].date?ms[0].date:localToday;
+ $('fields').innerHTML=`<p class="order-notice">Đơn đã trừ tồn khi lên đơn. Xác nhận xuất kho sẽ tạo phiếu xuất liên kết, không trừ tồn thêm lần nữa.</p><div class="fields">${field('Ngày xuất','date','date',`required min="${esc(ms[0].date)}" value="${dt}"`)}${field('Ghi chú xuất hàng','note','text','maxlength="1000"')}</div><p>Khách hàng: <b>${esc(ms[0].party)}</b></p><div class="tablewrap">${table(['Sản phẩm','Số lượng','Ngày SX theo FIFO'],ms.map(m=>[esc(m.name),`${fmt(m.entered_qty??m.qty)} ${esc(m.entered_unit||m.unit)}`,`<span class="lot-text">${esc(fifoText(m.fifo))}</span>`]))}</div>`;
+ $('dialog').showModal();
+}
 $('new').onclick=()=>{
  if(view==='products'){$('fields').classList.remove('document-fields');originalNew();return;}
  if(view==='suppliers'){$('form').dataset.mode='supplier';$('formerror').textContent='';$('dialogtitle').textContent='Thêm nhà cung cấp';$('fields').classList.remove('document-fields');$('fields').innerHTML=field('Tên nhà cung cấp','name','text','required maxlength="200"');$('dialog').showModal();return;}
  openDocument(view==='orders'?'order':view==='out'||view==='movements'&&$('movement-kind').value==='out'?'out':'in');
 };
 $('content').onclick=async e=>{
- const button=e.target.closest('button[data-id]');if(!button)return;const type=button.dataset.edit||button.dataset.delete,id=button.dataset.id;
+ const button=e.target.closest('button[data-id]');if(!button)return;const type=button.dataset.edit||button.dataset.delete||button.dataset.dispatch,id=button.dataset.id;
  const item=type==='order'?groups().find(ms=>ms[0].document_id===id):state.movements.find(m=>String(m.id)===id);if(!item)return;
+ if(button.dataset.dispatch){openDispatch(item);return;}
  if(button.dataset.edit){openDocument(type==='order'?'order':item.kind,item);return;}
  const description=type==='order'?`đơn ${id}`:`phiếu ${labels[item.kind]} #${id} (${item.name})`;
- if(!confirm(`Xóa ${description}? Tồn kho và các lô FIFO liên quan sẽ được tính lại.`))return;button.disabled=true;
+ if(!confirm(`Xóa ${description}? ${type==='order'&&item[0].shipment?'Phiếu xuất liên kết cũng sẽ bị xóa. ':''}Tồn kho và các lô FIFO liên quan sẽ được tính lại.`))return;button.disabled=true;
  try{await api('/api/'+type+'/delete',type==='order'?{document_id:id,revisions:Object.fromEntries(item.map(m=>[String(m.id),m.revision]))}:{id:item.id,revision:item.revision});await load();message('Đã xóa. Tồn kho và FIFO đã được tính lại.');}
  catch(e){message(e.message);button.disabled=false;}
 };
 $('form').addEventListener('input',schedulePreview);$('form').addEventListener('change',schedulePreview);
 $('form').onsubmit=async e=>{
- const mode=$('form').dataset.mode;if(!['movement-v2','order','supplier'].includes(mode))return originalSubmit(e);
+ const mode=$('form').dataset.mode;if(!['movement-v2','order','supplier','dispatch'].includes(mode))return originalSubmit(e);
  e.preventDefault();const button=$('form').querySelector('[type=submit]');button.disabled=true;previewVersion++;
- try{const data=mode==='supplier'?Object.fromEntries(new FormData($('form'))):readDocument();await api('/api/'+(mode==='movement-v2'?'movement':mode),data);$('dialog').close();await load();message(mode==='order'?'Đã lưu đơn và trừ tồn. Ngày SX được lấy từ các lô FIFO.':'Đã lưu. Tồn kho và FIFO đã được tính lại.');}
+ try{const data=mode==='dispatch'?{...Object.fromEntries(new FormData($('form'))),document_id:editingDocument[0].document_id,revisions:Object.fromEntries(editingDocument.map(m=>[String(m.id),m.revision]))}:mode==='supplier'?Object.fromEntries(new FormData($('form'))):readDocument();await api('/api/'+(mode==='dispatch'?'order/dispatch':mode==='movement-v2'?'movement':mode),data);$('dialog').close();await load();message(mode==='dispatch'?'Đã lập phiếu xuất từ đơn. Tồn kho không bị trừ thêm. Xem tại Nhập / Xuất kho.':mode==='order'?'Đã lưu đơn và trừ tồn. Ngày SX được lấy từ các lô FIFO.':'Đã lưu. Tồn kho và FIFO đã được tính lại.');}
  catch(e){$('formerror').textContent=e.message;}finally{button.disabled=false;}
 };

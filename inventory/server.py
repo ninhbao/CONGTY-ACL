@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from importer import parse_excel, clean
-from ledger import migrate, fifo, change, rename_base_unit
+from ledger import migrate, fifo, change, rename_base_unit, dispatch_order
 
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('ACL_DB', ROOT / 'data' / 'inventory.sqlite3'))
@@ -26,7 +26,9 @@ def snapshot(c, cutoff='9999-12-31'):
     products=[dict(r) for r in c.execute('SELECT * FROM products ORDER BY name')]
     movements=[dict(r) for r in c.execute('SELECT m.*,p.name FROM movements m JOIN products p ON p.id=m.product_id ORDER BY date DESC,m.id DESC')]
     allocations=fifo(movements)
+    shipments={r['document_id']:dict(r) for r in c.execute('SELECT * FROM order_shipments')}
     for m in movements:
+        m['shipment']=shipments.get(m['document_id'])
         m['fifo']=allocations.get(m['id'])
         if m['kind']!='in':
             m['source_manufactured']=m['manufactured']
@@ -64,6 +66,7 @@ def numeric(v, label, minimum=0, nullable=False):
     return n
 
 def mutate(c,path,d):
+    if path=='/api/order/dispatch': return dispatch_order(c,d)
     if path in ('/api/movement','/api/movement/delete','/api/order','/api/order/delete'):
         return change(c,path,d)
     if path=='/api/preview':

@@ -28,6 +28,7 @@ Chọn **Nhập Excel** và chọn file kho ACL. File cần bốn sheet Hàng ho
 - Danh mục hàng hóa, giá nhập, quy cách, ngưỡng tồn tối thiểu.
 - Phiếu nhập/xuất theo đơn vị lẻ hoặc số kiện, ngày sản xuất, đối tác và ghi chú.
 - Lên đơn nhiều sản phẩm: lưu đơn trừ tồn ngay tại ngày ghi đơn; không tạo thêm phiếu xuất cho cùng đơn để tránh trừ hai lần.
+- Với đơn đã lên, vào Lên đơn → Xuất kho, chọn ngày xuất và ghi chú. Phiếu xuất liên kết tự xuất hiện trong Nhập / Xuất kho, có mã đơn và các lô FIFO. Thao tác này không tạo thêm dòng trừ tồn. Mỗi đơn chỉ xuất một lần, toàn bộ các dòng; ngày xuất không được trước ngày lên đơn. Sửa đơn cập nhật nội dung xuất liên kết; xóa đơn xóa cả phiếu xuất liên kết và hoàn lại tồn.
 - Sửa/xóa phiếu nhập, phiếu xuất và đơn hàng đã lưu. Tồn và phân bổ lô tự tính lại; thao tác làm thiếu tồn cho giao dịch phía sau bị chặn. Thay đổi được ghi nhật ký trong cơ sở dữ liệu.
 - FIFO theo ngày nhập rồi số phiếu nhập. Cùng ngày, nhập được tính trước xuất/lên đơn. Nếu xuất nhiều lô, hiển thị số lượng, ngày sản xuất và phiếu nhập của từng lô. Ngày SX thiếu được giữ trống; không thay bằng ngày nhập.
 - Chai, Gói, Xô, Kg, Thùng, Bao và thêm đơn vị riêng. Tồn luôn tính theo đơn vị gốc của sản phẩm; đơn vị khác cần quy cách/hệ số rõ ràng. Hệ số được lưu trên từng dòng để sửa quy cách không đổi lịch sử.

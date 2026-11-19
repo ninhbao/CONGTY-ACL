@@ -24,6 +24,7 @@ def migrate(c):
         CREATE TABLE IF NOT EXISTS product_units(product_id INTEGER, name TEXT COLLATE NOCASE, factor REAL, PRIMARY KEY(product_id,name));
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT, before_json TEXT, after_json TEXT);
         CREATE TABLE IF NOT EXISTS movement_sequence(id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS order_shipments(document_id TEXT PRIMARY KEY, number TEXT UNIQUE, date TEXT, note TEXT);
     ''')
     c.execute('INSERT OR IGNORE INTO movement_sequence VALUES(1,0)')
     c.execute('UPDATE movement_sequence SET value=MAX(value,(SELECT COALESCE(MAX(id),0) FROM movements)) WHERE id=1')
@@ -152,6 +153,32 @@ def check_revision(existing, submitted):
     if str(existing['revision']) != str(submitted.get('revision')):
         raise ValueError('Phiếu đã thay đổi ở cửa sổ khác. Tải lại dữ liệu trước khi sửa/xóa.')
 
+def dispatch_order(c,d):
+    c.execute('BEGIN IMMEDIATE')
+    try:
+        doc=clean(d.get('document_id'));dt=clean(d.get('date'));date.fromisoformat(dt)
+        ms=[m for m in rows(c) if m['kind']=='order' and m['document_id']==doc]
+        if not ms: raise ValueError('Không tìm thấy đơn hàng.')
+        if c.execute('SELECT 1 FROM order_shipments WHERE document_id=?',(doc,)).fetchone():
+            raise ValueError('Đơn này đã có phiếu xuất kho. Không xuất trùng.')
+        versions=d.get('revisions',{})
+        if set(versions)!={str(m['id']) for m in ms}: raise ValueError('Đơn hàng đã thay đổi. Tải lại dữ liệu.')
+        for m in ms:
+            check_revision(m,{'revision':versions[str(m['id'])]})
+            if dt<m['date']: raise ValueError('Ngày xuất không được trước ngày lên đơn.')
+        allocation=fifo(rows(c))
+        for m in ms:
+            info=allocation[m['id']]
+            if info['review'] or info['shortage']>EPS: raise ValueError('Chưa xác định đủ lô FIFO cho đơn. Đối chiếu phiếu nhập trước khi xuất.')
+        number='PX-'+doc
+        shipment=dict(document_id=doc,number=number,date=dt,note=clean(d.get('note')))
+        c.execute('INSERT INTO order_shipments VALUES(:document_id,:number,:date,:note)',shipment)
+        c.execute("UPDATE movements SET revision=revision+1 WHERE document_id=? AND kind='order'",(doc,))
+        c.execute('INSERT INTO audit(action,before_json,after_json) VALUES(?,?,?)',('/api/order/dispatch',json.dumps(ms,ensure_ascii=False),json.dumps(shipment,ensure_ascii=False)))
+        c.commit();return dict(ok=True,shipment=shipment)
+    except Exception:
+        c.rollback();raise
+
 def change(c, path, d, preview=False):
     c.execute('BEGIN IMMEDIATE')
     try:
@@ -168,9 +195,12 @@ def change(c, path, d, preview=False):
             if path.endswith('/delete'):
                 if not doc: raise ValueError('Thiếu mã đơn hàng.')
                 c.execute("DELETE FROM movements WHERE document_id=? AND kind='order'", (doc,))
+                c.execute('DELETE FROM order_shipments WHERE document_id=?',(doc,))
             else:
                 doc = doc or 'DH-' + uuid.uuid4().hex[:12].upper()
                 dt = clean(d.get('date')); date.fromisoformat(dt)
+                shipment=c.execute('SELECT date FROM order_shipments WHERE document_id=?',(doc,)).fetchone()
+                if shipment and dt>shipment['date']: raise ValueError('Ngày lên đơn không được sau ngày đã xuất kho.')
                 party = clean(d.get('party'))
                 if not party: raise ValueError('Chọn khách hàng cho đơn hàng.')
                 lines = d.get('lines')
