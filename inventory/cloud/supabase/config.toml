@@ -1,0 +1,3 @@
+[functions.acl-api]
+verify_jwt = false
+# Auth is verified on every request by calling Supabase Auth /user in index.ts.

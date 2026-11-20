@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {emptyState,apply,snapshot} from './supabase/functions/acl-api/engine.mjs';
+let s=emptyState();const run=(p,d)=>{const r=apply(s,p,d);s=r.state;return r.result;};
+run('/api/product',{name:'Hàng thử',unit:'Chai',package:'Thùng',pack:12});
+run('/api/movement',{kind:'in',date:'2026-01-01',product_id:1,qty:10,manufactured:'2025-12-01'});
+run('/api/movement',{kind:'in',date:'2026-01-02',product_id:1,qty:10,manufactured:'2025-12-02'});
+run('/api/order',{date:'2026-01-03',party:'Khách thử',lines:[{product_id:1,qty:12}]});
+let v=snapshot(s),order=v.movements.filter(m=>m.kind==='order');assert.equal(v.products[0].stock,8);assert.deepEqual(order[0].fifo.lots.map(l=>l.qty),[10,2]);
+const d={document_id:order[0].document_id,date:'2026-01-04',revisions:Object.fromEntries(order.map(m=>[m.id,m.revision]))};
+run('/api/order/dispatch',d);assert.equal(snapshot(s).products[0].stock,8);assert.throws(()=>run('/api/order/dispatch',d));
+const before=JSON.stringify(s);assert.throws(()=>run('/api/movement',{kind:'out',date:'2026-01-05',product_id:1,qty:9}));assert.equal(JSON.stringify(s),before);
+assert.throws(()=>run('/api/movement/delete',{id:1,revision:1}));
+run('/api/product',{id:1,name:'Hàng thử',unit:'Gói',package:'Thùng',pack:12,expected_unit:'Chai'});assert(s.movements.every(m=>m.unit==='Gói'));assert.equal(snapshot(s).products[0].stock,8);
+order=s.movements.filter(m=>m.kind==='order');run('/api/order/delete',{document_id:order[0].document_id,revisions:Object.fromEntries(order.map(m=>[m.id,m.revision]))});assert.equal(snapshot(s).products[0].stock,20);assert.equal(s.shipments.length,0);
+console.log('PASS: FIFO, trừ tồn đơn hàng, xuất không trừ hai lần, chặn tồn âm, xoá phiếu, đổi đơn vị, xoá đơn.');
