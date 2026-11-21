@@ -11,7 +11,7 @@
   const u=new URL(path,location.href),body={workspace_id:cfg.workspace,path:u.pathname,cutoff:u.searchParams.get('date')||'9999-12-31',data,expected_revision:revision,request_id:crypto.randomUUID()};
   const r=await fetch(cfg.url+'/functions/v1/acl-api',{method:'POST',headers:{apikey:cfg.key,Authorization:'Bearer '+await token(),'Content-Type':'application/json'},body:JSON.stringify(body)});
   const result=await r.json();if(!r.ok){if(r.status===401){save(null);document.body.classList.add('signed-out');}throw Error(result.error||'Không thể kết nối dữ liệu.');}
-  if(u.pathname==='/api/state'||u.pathname!=='/api/preview'&&u.pathname!=='/api/backup')revision=result.workspace_revision;
+  if(u.searchParams.get('report')!=='1'&&(u.pathname==='/api/state'||u.pathname!=='/api/preview'&&u.pathname!=='/api/backup'))revision=result.workspace_revision;
   return result;
  };
 })();
